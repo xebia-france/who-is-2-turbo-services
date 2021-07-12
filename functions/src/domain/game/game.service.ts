@@ -8,13 +8,21 @@ import { shuffle } from 'lodash';
 import { Member, MemberWithPicture } from '../model/Member';
 import { Question } from '../model/Question';
 import { Proposition } from '../model/Proposition';
+import { CryptoSpi } from '../CryptoSpi';
+import { PictureStorageSpi } from '../PictureStorageSpi';
+import { Readable } from 'stream';
+
+const ONE_HOUR_IN_MS = 3600000;
+const PICTURE_URL_EXPIRATION = ONE_HOUR_IN_MS;
 
 @Injectable()
 export class GameService implements GameApi {
   constructor(
+    @Inject('CryptoSpi') private cryptoSpi: CryptoSpi,
     @Inject('GameRepositorySpi') private gameRepositorySpi: GameRepositorySpi,
     @Inject('MemberRepositorySpi')
     private memberRepositorySpi: MemberRepositorySpi,
+    @Inject('PictureStorageSpi') private pictureStorageSpi: PictureStorageSpi,
   ) {}
 
   async generateSeriesGame(size: number, nbPropositionsByQuestion = 4): Promise<SeriesGame> {
@@ -79,9 +87,7 @@ export class GameService implements GameApi {
       ...otherMembers.map(GameService.mapMemberToProposition),
     ]);
 
-    const questionImageUrl = await this.memberRepositorySpi.generatePrivatePictureUrl(
-      selectedMember.picture,
-    );
+    const questionImageUrl = this.cryptoSpi.cypher(`${selectedMember.picture}|${Date.now()}`);
 
     return {
       question: questionImageUrl,
@@ -92,5 +98,12 @@ export class GameService implements GameApi {
 
   private static mapMemberToProposition({ firstName, lastName }: Member): Proposition {
     return { firstName, lastName };
+  }
+
+  readPicture(cypheredPictureRef: string): Promise<Readable> {
+    const [picture, release] = this.cryptoSpi.decipher(cypheredPictureRef).split('|');
+    const releaseDate = Number.parseInt(release);
+    if (Date.now() - PICTURE_URL_EXPIRATION > releaseDate) return Promise.reject('Game expired');
+    return this.pictureStorageSpi.readPicture(picture);
   }
 }
